@@ -1,0 +1,58 @@
+name: build-mdcx-custom
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  UPSTREAM_TAG: "220260517"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 拉取上游源码
+        run: |
+          curl -fsSL -o /tmp/mdcx.tar.gz \
+            "https://codeload.github.com/Hazard804/mdcx/tar.gz/refs/tags/${UPSTREAM_TAG}"
+          mkdir -p src
+          tar xzf /tmp/mdcx.tar.gz -C src --strip-components=1
+          echo "源码文件数: $(find src -type f | wc -l)"
+
+      - name: 应用色花标题补丁
+        run: python3 patches/apply.py src
+
+      - name: 校验补丁结果
+        run: |
+          grep -q 'title_sehua_zh' src/mdcx/config/models.py
+          grep -q 'get_sehua_title' src/mdcx/core/translate.py
+          grep -q 'c_number.json' src/mdcx/config/resources.py
+          python3 -m py_compile \
+            src/mdcx/config/models.py \
+            src/mdcx/config/v1.py \
+            src/mdcx/config/resources.py \
+            src/mdcx/core/translate.py
+          echo "补丁校验通过"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 构建并推送
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/mdcx-custom:${{ env.UPSTREAM_TAG }}-sehua
